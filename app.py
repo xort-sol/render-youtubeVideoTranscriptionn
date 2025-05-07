@@ -6,6 +6,12 @@ import os
 import tempfile
 import shutil
 from dotenv import load_dotenv
+import logging
+import time
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -45,6 +51,18 @@ def download_audio(youtube_url, cookies=None):
         shutil.rmtree(temp_dir)
         raise e
 
+@app.route('/', methods=['GET'])
+def root():
+    """Root endpoint for health check"""
+    return jsonify({
+        'status': 'active',
+        'timestamp': int(time.time()),
+        'cookie_support': {
+            'available': True,
+            'count': 0
+        }
+    })
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint for Render"""
@@ -53,30 +71,41 @@ def health_check():
 @app.route('/transcribe', methods=['POST'])
 def transcribe():
     try:
+        logger.info("Received transcription request")
         data = request.json
         youtube_url = data.get('url')
         cookies = data.get('cookies')
         
+        logger.info(f"Processing URL: {youtube_url}")
+        
         if not youtube_url:
+            logger.error("No YouTube URL provided")
             return jsonify({'error': 'YouTube URL is required'}), 400
         
         # Create temporary file for cookies if provided
         cookie_file = None
         if cookies:
+            logger.info("Cookies provided, creating temporary file")
             cookie_file = tempfile.NamedTemporaryFile(mode='w', delete=False)
             cookie_file.write(cookies)
             cookie_file.close()
         
         try:
             # Download audio
+            logger.info("Downloading audio...")
             audio_file = download_audio(youtube_url, cookie_file.name if cookie_file else None)
+            logger.info("Audio downloaded successfully")
             
             # Transcribe
+            logger.info("Starting transcription...")
             transcriber = aai.Transcriber()
             transcript = transcriber.transcribe(audio_file)
             
             if transcript.status == aai.TranscriptStatus.error:
+                logger.error(f"Transcription error: {transcript.error}")
                 return jsonify({'error': transcript.error}), 500
+            
+            logger.info("Transcription completed successfully")
             
             # Clean up
             os.remove(audio_file)
@@ -99,12 +128,14 @@ def transcribe():
             })
             
         except Exception as e:
+            logger.error(f"Error during transcription: {str(e)}")
             # Clean up on error
             if cookie_file:
                 os.remove(cookie_file.name)
             return jsonify({'error': str(e)}), 500
             
     except Exception as e:
+        logger.error(f"Error processing request: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
